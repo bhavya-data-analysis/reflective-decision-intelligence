@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Set
+from datetime import datetime, timezone
 
 from .prediction import predict_pre_reflection
 from .clarity import detect_decision_clarity
@@ -11,6 +12,7 @@ from .questions import BASE_QUESTIONS, FOLLOW_UPS, Question
 from .triggers import detect_high_stakes
 from .scoring import score_reflection
 from .profile import DecisionProfile
+from .interventions import Intervention
 
 
 @dataclass
@@ -21,6 +23,8 @@ class ReflectionResult:
     trigger_reasons: List[str]
     answers: Dict[str, str]
     profile: DecisionProfile
+    interventions: List[Intervention]
+    attributions: List[Dict]
 
 
 def ask_input(prompt: str) -> str:
@@ -28,12 +32,6 @@ def ask_input(prompt: str) -> str:
 
 
 def _pick_followups(flags, low_spec_cooldown: int) -> List[Question]:
-    """
-    Priority:
-    1) irritation (single-shot)
-    2) deflection / overconfidence / emotional
-    3) low_specificity (only if cooldown allows)
-    """
     if flags.irritated:
         return FOLLOW_UPS["irritation"][:1]
 
@@ -53,20 +51,19 @@ def _pick_followups(flags, low_spec_cooldown: int) -> List[Question]:
 
 
 def run_reflection(decision_text: str) -> ReflectionResult:
-    # 🔹 ML pre-reflection prediction (optional, non-blocking)
+    recent_harm = {}
+    recent_harm = {
+  "specificity": True,
+  "deflection": False
+}
+    # --- ML pre-reflection prediction ---
     pre_prediction = predict_pre_reflection(decision_text)
 
     if pre_prediction:
+        msg = f"[ML pre-check] Predicted fragility: {pre_prediction.label}"
         if pre_prediction.confidence is not None:
-            print(
-                f"[ML pre-check] Predicted fragility: "
-                f"{pre_prediction.label} (conf {pre_prediction.confidence:.2f})\n"
-            )
-        else:
-            print(
-                f"[ML pre-check] Predicted fragility: "
-                f"{pre_prediction.label}\n"
-            )
+            msg += f" (conf {pre_prediction.confidence:.2f})"
+        print(msg + "\n")
 
     clarity = detect_decision_clarity(decision_text)
     trigger = detect_high_stakes(decision_text)
@@ -78,12 +75,13 @@ def run_reflection(decision_text: str) -> ReflectionResult:
         print("\nLet’s do a quick reflection.\n")
 
     answers: Dict[str, str] = {}
+    interventions_asked: List[Intervention] = []
+    intervention_attributions: List[Dict] = []
 
     total_fragility = 0
     total_depth = 0
     all_signals: Dict[str, int] = {}
 
-    # Anti-repeat controls (per run)
     asked_followup_keys: Set[str] = set()
     low_spec_cooldown = 0
 
@@ -92,7 +90,6 @@ def run_reflection(decision_text: str) -> ReflectionResult:
         answers[q.key] = ans
 
         flags = detect_flags(ans)
-
         score = score_reflection(
             flags=flags,
             answer_text=ans,
@@ -109,13 +106,56 @@ def run_reflection(decision_text: str) -> ReflectionResult:
 
         asked = 0
         for fq in followups:
-            if asked >= 2:
-                break
-            if fq.key in asked_followup_keys:
+            if asked >= 2 or fq.key in asked_followup_keys:
                 continue
 
-            f_ans = ask_input(fq.prompt)
+            # --- intervention begins ---
+            intervention = Intervention(
+                id=fq.key,
+                type="followups",
+                target_failure=fq.key,
+                cognitive_state_before=clarity.level.value,
+                question_text=fq.prompt,
+                timestamp=datetime.now(timezone.utc),
+            )
+            #-- Level 4.3 -
+            if recent_harm.get(intervention.type):
+                continue
+
+            interventions_asked.append(intervention)
+
+            fragility_before = total_fragility
+            # ask the question
+
+            f_ans = ask_input(intervention.question_text)
             answers[fq.key] = f_ans
+
+#score followup
+            f_flags = detect_flags(f_ans)
+            f_score = score_reflection(
+                flags=f_flags,
+                answer_text=f_ans,
+                is_high_stakes=trigger.is_high_stakes,
+            )
+
+            total_fragility += f_score.decision_fragility
+            total_depth += f_score.reflection_depth
+
+            for k, v in f_score.signals.items():
+                all_signals[k] = all_signals.get(k, 0) + v
+
+            delta = fragility_before - total_fragility
+
+            intervention_attributions.append({
+                "intervention_id": intervention.id,
+                "delta_fragility": delta,
+                "effect": (
+                    "helped" if delta > 0
+                    else "hurt" if delta < 0
+                    else "no_change"
+                ),
+            })
+
             asked_followup_keys.add(fq.key)
             asked += 1
 
@@ -124,24 +164,18 @@ def run_reflection(decision_text: str) -> ReflectionResult:
 
         low_spec_cooldown = max(0, low_spec_cooldown - 1)
 
-    # --- compare ML vs rules (simple) ---
+    # --- reflection effect (overall ML vs rules) ---
     reflection_effect = None
-
     if pre_prediction:
         ml_level = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}.get(pre_prediction.label)
-
-        rule_level = (
-            1 if total_fragility <= 2
-            else 2 if total_fragility <= 5
-            else 3
-        )
+        rule_level = 1 if total_fragility <= 2 else 2 if total_fragility <= 5 else 3
 
         if rule_level < ml_level:
             reflection_effect = "helped"
         elif rule_level > ml_level:
             reflection_effect = "hurt"
         else:
-            reflection_effect = "no change"
+            reflection_effect = "no_change"
 
     profile = DecisionProfile(
         decision_text=decision_text,
@@ -159,4 +193,6 @@ def run_reflection(decision_text: str) -> ReflectionResult:
         trigger_reasons=trigger.reasons,
         answers=answers,
         profile=profile,
+        interventions=interventions_asked,
+        attributions=intervention_attributions,
     )
