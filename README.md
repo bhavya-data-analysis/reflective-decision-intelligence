@@ -82,7 +82,7 @@ This adds anticipation without replacing judgment.
 
 ---
 
-### Level 4 — Measuring Improvement
+### Level 4 — Measuring Improvement and Control
 
 #### Level 4.1 — Reflection Effect (Complete)
 The system computes:
@@ -91,17 +91,26 @@ The system computes:
 This answers a simple but important question:  
 **Did reflection actually improve decision quality?**
 
-This is the first real control signal in the system.
+This is the first true control signal in the system.
 
-#### Level 4.2 — Intervention Attribution (In Progress)
-Currently working on:
-- Treating questions as **interventions**
-- Attributing changes in decision quality to specific questions
-- Logging which interventions help, stall, or harm thinking under different cognitive states
+---
 
-No reinforcement learning yet — just careful attribution and measurement.
+#### Level 4.2 — Intervention Attribution (Complete)
+- Questions are treated as **interventions**
+- Changes in decision fragility are attributed to specific questions
+- The system logs which interventions help, hurt, or produce no change
+- Effects are tracked under different cognitive states
 
-This is where the system begins to shift from reflection to learning.
+Reflection is no longer subjective — it is measurable.
+
+---
+
+#### Level 4.3 — Measurement-Aware Probing (Complete)
+- The system adapts **within a session** based on observed effects
+- Interventions that empirically worsen thinking are not repeated
+- Neutral or helpful probes are allowed to continue
+
+This introduces **control without learning a policy**.
 
 ---
 
@@ -118,7 +127,7 @@ ML is not used to:
 - decide outcomes
 - replace human judgment
 
-The goal is measurement and learning, not automation.
+The goal is measurement and learning — not automation.
 
 ---
 
@@ -140,5 +149,8 @@ It is an attempt to build a **serious learning system around human decision-maki
 
 ## Status
 
-Current state: **Level 4.1 complete**  
-Actively working on: **Level 4.2 — Intervention Attribution**
+Current state: **Level 4 complete (4.1–4.3)**  
+
+**Next phase beginning:**  
+**Level 5 — Intervention Learning (RL-lite)**  
+Learning an intervention policy from observed `(state, question, effect)` data — without advice, without outcome optimization, and without replacing human judgment.
