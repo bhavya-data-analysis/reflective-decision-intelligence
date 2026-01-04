@@ -74,7 +74,6 @@ def select_followups(
 ) -> List[Question]:
     stats = InterventionStats()
 
-    # Hard override (unchanged)
     if flags.irritated:
         return FOLLOW_UPS["irritation"][:1]
 
@@ -89,15 +88,13 @@ def select_followups(
     if flags.low_specificity and low_spec_cooldown <= 0:
         candidates.extend(FOLLOW_UPS["low_specificity"])
 
-    # Level 4.3 safety
     candidates = [q for q in candidates if not recent_harm.get(q.key)]
 
-    # Level 5 ranking
     ranked = []
     for q in candidates:
         state_key = (
             clarity_level,
-            q.key,  # still OK here; real learning write happens later
+            q.key,
             "MID",
             is_high_stakes,
         )
@@ -119,16 +116,13 @@ def select_followups(
 # =========================
 
 def run_reflection(decision_text: str) -> ReflectionResult:
-    # --- session-local harm memory (Level 4.3) ---
     recent_harm: Dict[str, bool] = {
         "specificity": False,
         "deflection": False,
     }
 
-    # --- Level 5 learning memory ---
     stats = InterventionStats()
 
-    # --- ML pre-reflection prediction ---
     pre_prediction = predict_pre_reflection(decision_text)
 
     if pre_prediction:
@@ -156,10 +150,6 @@ def run_reflection(decision_text: str) -> ReflectionResult:
 
     asked_followup_keys: Set[str] = set()
     low_spec_cooldown = 0
-
-    # =========================
-    # Base questions
-    # =========================
 
     for q in BASE_QUESTIONS:
         ans = ask_input(q.prompt)
@@ -233,10 +223,6 @@ def run_reflection(decision_text: str) -> ReflectionResult:
                 "effect": effect,
             })
 
-            # =========================
-            # Level 5 LEARNING WRITE (TIGHTENED)
-            # =========================
-
             dominant_failure = dominant_failure_from_flags(f_flags)
             phase = derive_phase(len(asked_followup_keys))
 
@@ -265,10 +251,6 @@ def run_reflection(decision_text: str) -> ReflectionResult:
 
         low_spec_cooldown = max(0, low_spec_cooldown - 1)
 
-    # =========================
-    # Reflection effect (ML vs rules)
-    # =========================
-
     reflection_effect = None
     if pre_prediction:
         ml_level = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}.get(pre_prediction.label)
@@ -289,6 +271,27 @@ def run_reflection(decision_text: str) -> ReflectionResult:
         signals=all_signals,
         reflection_effect=reflection_effect,
     )
+
+    # =========================
+    # NEW: Per-decision summary (OUTPUT FIX)
+    # =========================
+
+    print("\n--- Decision Summary ---")
+    print(f"Decision: {decision_text[:80]}")
+    print(f"Clarity: {clarity.level.value}")
+    print(f"High-stakes: {trigger.is_high_stakes}")
+    print(f"Fragility score: {total_fragility}")
+    print(f"Reflection depth: {total_depth}")
+
+    if intervention_attributions:
+        print("Interventions:")
+        for a in intervention_attributions:
+            print(
+                f"  - {a['intervention_id']}: "
+                f"{a['effect']} (Δ {a['delta_fragility']})"
+            )
+    else:
+        print("Interventions: none")
 
     return ReflectionResult(
         decision=decision_text,

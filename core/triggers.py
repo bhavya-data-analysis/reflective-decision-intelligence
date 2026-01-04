@@ -11,9 +11,11 @@ class TriggerResult:
     reasons: List[str]
 
 
-# Start simple: keyword + category heuristics (rules-first, local-first)
+# =========================
+# Strong irreversible triggers
+# =========================
 HIGH_STAKES_KEYWORDS: Tuple[str, ...] = (
-    # Career / income
+    # Career / income (irreversible)
     "quit", "quitting", "resign", "resignation",
     "leave my job", "leave job",
     "drop out", "dropout",
@@ -23,39 +25,59 @@ HIGH_STAKES_KEYWORDS: Tuple[str, ...] = (
     "leave country", "leaving country",
     "move abroad", "moving abroad",
     "go back to my country", "return to my country",
-    "immigrate", "immigration",
-    "emigrate",
-    "visa",
+    "immigrate", "immigration", "emigrate", "visa",
 
-    # Relationships
+    # Relationships (irreversible)
     "break up", "divorce",
     "marry", "marriage",
 
-    # Assets / finance
+    # Assets / finance (hard to undo)
     "sell my house", "buy a house",
-    "take a loan", "loan", "debt",
+    "take a loan", "loan", "debt", "mortgage",
 
     # Health
     "surgery", "operation",
 )
 
-# Lightweight “domains” to grow later
+
+# =========================
+# Domains (context only)
+# =========================
 DOMAIN_HINTS: Tuple[str, ...] = (
     # Work / career
     "job", "career", "company", "manager", "work",
 
+    # Business
+    "business", "startup", "side business", "ecom",
+
     # Relationships
-    "relationship", "marriage", "family",
+    "relationship", "family", "girlfriend", "boyfriend",
 
     # Money
-    "money", "finance", "loan", "rent",
+    "money", "finance", "rent", "salary", "income",
 
     # Health
     "health", "doctor",
 
-    # Location / immigration
-    "move", "relocate",
-    "country", "abroad", "visa", "immigration",
+    # Location
+    "move", "relocate", "city", "country",
+)
+
+
+# =========================
+# Risk amplifiers (new)
+# =========================
+RISK_AMPLIFIERS: Tuple[str, ...] = (
+    # Financial downside
+    "no income", "unstable", "risk", "lose money",
+    "bankrupt", "loss", "debt", "loan", "mortgage",
+
+    # Irreversibility signals
+    "no backup", "no plan b", "all in", "everything",
+    "cannot undo", "hard to undo",
+
+    # Responsibility signals
+    "kids", "family depends", "wife", "husband",
 )
 
 
@@ -63,22 +85,22 @@ def detect_high_stakes(decision_text: str) -> TriggerResult:
     text = (decision_text or "").strip().lower()
     reasons: List[str] = []
 
-    # Strong keyword trigger
+    # 1️⃣ Strong keyword trigger (always high-stakes)
     for kw in HIGH_STAKES_KEYWORDS:
         if kw in text:
-            reasons.append(f"Matched keyword: '{kw}'")
-            break
+            reasons.append(f"Matched irreversible keyword: '{kw}'")
+            return TriggerResult(True, reasons)
 
-    # Weaker domain-based trigger (only if no strong keyword hit)
-    if not reasons:
-        domain_hits = [h for h in DOMAIN_HINTS if h in text]
-        if domain_hits:
-            reasons.append(
-                f"Domain hint(s): {', '.join(sorted(set(domain_hits)))}"
-            )
+    # 2️⃣ Domain + risk amplifier (conditional)
+    domain_hits = [h for h in DOMAIN_HINTS if h in text]
+    risk_hits = [r for r in RISK_AMPLIFIERS if r in text]
 
-    is_high_stakes = len(reasons) > 0
-    return TriggerResult(
-        is_high_stakes=is_high_stakes,
-        reasons=reasons,
-    )
+    if domain_hits and risk_hits:
+        reasons.append(
+            f"Domain + risk: {', '.join(sorted(set(domain_hits)))} "
+            f"| risk: {', '.join(sorted(set(risk_hits)))}"
+        )
+        return TriggerResult(True, reasons)
+
+    # 3️⃣ Otherwise: not high-stakes
+    return TriggerResult(False, [])
