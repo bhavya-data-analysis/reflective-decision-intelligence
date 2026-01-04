@@ -13,7 +13,12 @@ from .triggers import detect_high_stakes
 from .scoring import score_reflection
 from .profile import DecisionProfile
 from .interventions import Intervention
+from .intervention_stats import InterventionStats
 
+
+# =========================
+# Data structures
+# =========================
 
 @dataclass
 class ReflectionResult:
@@ -31,31 +36,98 @@ def ask_input(prompt: str) -> str:
     return input(f"{prompt}\n> ").strip()
 
 
-def _pick_followups(flags, low_spec_cooldown: int) -> List[Question]:
+# =========================
+# Level 5 helpers (TIGHTEN)
+# =========================
+
+def derive_phase(question_count: int) -> str:
+    if question_count <= 1:
+        return "EARLY"
+    if question_count <= 3:
+        return "MID"
+    return "LATE"
+
+
+def dominant_failure_from_flags(flags) -> str:
+    if flags.deflection:
+        return "deflection"
+    if flags.overconfidence:
+        return "overconfidence"
+    if flags.emotional:
+        return "emotional"
+    if flags.low_specificity:
+        return "low_specificity"
+    return "none"
+
+
+# =========================
+# Level 5 selection seam
+# =========================
+
+def select_followups(
+    *,
+    flags,
+    low_spec_cooldown: int,
+    recent_harm: Dict[str, bool],
+    clarity_level: str,
+    is_high_stakes: bool,
+) -> List[Question]:
+    stats = InterventionStats()
+
+    # Hard override (unchanged)
     if flags.irritated:
         return FOLLOW_UPS["irritation"][:1]
 
-    followups: List[Question] = []
+    candidates: List[Question] = []
 
     if flags.deflection:
-        followups.extend(FOLLOW_UPS["deflection"])
+        candidates.extend(FOLLOW_UPS["deflection"])
     if flags.overconfidence:
-        followups.extend(FOLLOW_UPS["overconfidence"])
+        candidates.extend(FOLLOW_UPS["overconfidence"])
     if flags.emotional:
-        followups.extend(FOLLOW_UPS["emotional"])
-
+        candidates.extend(FOLLOW_UPS["emotional"])
     if flags.low_specificity and low_spec_cooldown <= 0:
-        followups.extend(FOLLOW_UPS["low_specificity"])
+        candidates.extend(FOLLOW_UPS["low_specificity"])
 
-    return followups
+    # Level 4.3 safety
+    candidates = [q for q in candidates if not recent_harm.get(q.key)]
 
+    # Level 5 ranking
+    ranked = []
+    for q in candidates:
+        state_key = (
+            clarity_level,
+            q.key,  # still OK here; real learning write happens later
+            "MID",
+            is_high_stakes,
+        )
+
+        entry = stats.get(state_key).get(q.key)
+        score = entry["avg_reward"] if entry else 0.0
+
+        if entry and entry["harm"] > 0:
+            score -= 1.0
+
+        ranked.append((score, q))
+
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return [q for _, q in ranked]
+
+
+# =========================
+# Main reflection loop
+# =========================
 
 def run_reflection(decision_text: str) -> ReflectionResult:
-    recent_harm = {}
-    recent_harm = {
-  "specificity": True,
-  "deflection": False
-}
+    # --- session-local harm memory (Level 4.3) ---
+    recent_harm: Dict[str, bool] = {
+        "specificity": False,
+        "deflection": False,
+    }
+
+    # --- Level 5 learning memory ---
+    stats = InterventionStats()
+
     # --- ML pre-reflection prediction ---
     pre_prediction = predict_pre_reflection(decision_text)
 
@@ -85,6 +157,10 @@ def run_reflection(decision_text: str) -> ReflectionResult:
     asked_followup_keys: Set[str] = set()
     low_spec_cooldown = 0
 
+    # =========================
+    # Base questions
+    # =========================
+
     for q in BASE_QUESTIONS:
         ans = ask_input(q.prompt)
         answers[q.key] = ans
@@ -102,35 +178,35 @@ def run_reflection(decision_text: str) -> ReflectionResult:
         for k, v in score.signals.items():
             all_signals[k] = all_signals.get(k, 0) + v
 
-        followups = _pick_followups(flags, low_spec_cooldown)
+        followups = select_followups(
+            flags=flags,
+            low_spec_cooldown=low_spec_cooldown,
+            recent_harm=recent_harm,
+            clarity_level=clarity.level.value,
+            is_high_stakes=trigger.is_high_stakes,
+        )
 
         asked = 0
         for fq in followups:
             if asked >= 2 or fq.key in asked_followup_keys:
                 continue
 
-            # --- intervention begins ---
             intervention = Intervention(
                 id=fq.key,
-                type="followups",
+                type="followup",
                 target_failure=fq.key,
                 cognitive_state_before=clarity.level.value,
                 question_text=fq.prompt,
                 timestamp=datetime.now(timezone.utc),
             )
-            #-- Level 4.3 -
-            if recent_harm.get(intervention.type):
-                continue
 
             interventions_asked.append(intervention)
 
             fragility_before = total_fragility
-            # ask the question
 
             f_ans = ask_input(intervention.question_text)
             answers[fq.key] = f_ans
 
-#score followup
             f_flags = detect_flags(f_ans)
             f_score = score_reflection(
                 flags=f_flags,
@@ -145,16 +221,41 @@ def run_reflection(decision_text: str) -> ReflectionResult:
                 all_signals[k] = all_signals.get(k, 0) + v
 
             delta = fragility_before - total_fragility
+            effect = (
+                "helped" if delta > 0
+                else "hurt" if delta < 0
+                else "no_change"
+            )
 
             intervention_attributions.append({
                 "intervention_id": intervention.id,
                 "delta_fragility": delta,
-                "effect": (
-                    "helped" if delta > 0
-                    else "hurt" if delta < 0
-                    else "no_change"
-                ),
+                "effect": effect,
             })
+
+            # =========================
+            # Level 5 LEARNING WRITE (TIGHTENED)
+            # =========================
+
+            dominant_failure = dominant_failure_from_flags(f_flags)
+            phase = derive_phase(len(asked_followup_keys))
+
+            state_key = (
+                clarity.level.value,
+                dominant_failure,
+                phase,
+                trigger.is_high_stakes,
+            )
+
+            stats.record(
+                state_key=state_key,
+                intervention_id=intervention.id,
+                reward=delta,
+                effect=effect,
+            )
+
+            if effect == "hurt":
+                recent_harm[fq.key] = True
 
             asked_followup_keys.add(fq.key)
             asked += 1
@@ -164,7 +265,10 @@ def run_reflection(decision_text: str) -> ReflectionResult:
 
         low_spec_cooldown = max(0, low_spec_cooldown - 1)
 
-    # --- reflection effect (overall ML vs rules) ---
+    # =========================
+    # Reflection effect (ML vs rules)
+    # =========================
+
     reflection_effect = None
     if pre_prediction:
         ml_level = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}.get(pre_prediction.label)
