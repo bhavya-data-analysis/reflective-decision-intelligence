@@ -15,21 +15,13 @@ class InterventionStats:
     Stores effectiveness of (state_key, intervention_id) pairs.
     """
 
-from pathlib import Path
-
-class InterventionStats:
-    """
-    Lightweight learning memory for Level 5.
-    Stores effectiveness of (state_key, intervention_id) pairs.
-    """
-
     def __init__(self, path: str | None = None):
         if path is None:
             self.path = Path(__file__).parent / "intervention_stats.json"
         else:
             self.path = Path(path)
 
-        self.stats = {}
+        self.stats: Dict[str, Dict] = {}
         self._load()
 
     # ---------- public API ----------
