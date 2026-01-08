@@ -141,9 +141,8 @@ This project is intentionally built slowly:
 - the same system grows deeper over time
 - new capabilities are added only when they are earned
 - explanations remain local and inspectable
-
-This is not a demo or a toy.  
-It is an attempt to build a **serious learning system around human decision-making**.
+  
+It is an attempt to build a **learning system around human decision-making**.
 
 ---
 
@@ -154,3 +153,4 @@ Current state: **Level 4 complete (4.1–4.3)**
 **Next phase beginning:**  
 **Level 5 — Intervention Learning (RL-lite)**  
 Learning an intervention policy from observed `(state, question, effect)` data — without advice, without outcome optimization, and without replacing human judgment.
+
