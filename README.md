@@ -154,3 +154,7 @@ Current state: **Level 4 complete (4.1–4.3)**
 **Level 5 — Intervention Learning (RL-lite)**  
 Learning an intervention policy from observed `(state, question, effect)` data — without advice, without outcome optimization, and without replacing human judgment.
 
+---
+## 👤 Author
+**Bhavya Pandya**  
+LinkedIn: https://www.linkedin.com/in/bhavya-91p/
